@@ -26,6 +26,9 @@ Quick check on any file: `grep -abo 'SHARETHOUGHT-v1$' file.png` finds the paylo
 ## Repo layout
 
 ```
-SKILL.md    the format spec + all shell recipes — the whole product
+SKILL.md    the format spec + all shell recipes — the product
+test.sh     recipe tests: both locales (C, C.utf8), fixture PNG via base64, no renderer needed
 LICENSE     free for any use; no fencing
 ```
+
+CI runs `sh test.sh` with the default awk and again with `AWK=gawk` — byte-emitting awk calls are locale-sensitive in gawk (numeric `%c` becomes a codepoint under UTF-8), which is exactly the class the harness pins.

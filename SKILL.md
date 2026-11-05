@@ -90,7 +90,7 @@ LC_ALL=C od -An -tx1 -j $((h+16)) -N 5 file.png    # 5 bytes after the keyword: 
 Then read the chunk's **declared length** — the 4 big-endian bytes just before the type field — and take exactly that much payload, no arbitrary caps (the `NF>3` guard skips od's trailing blank line):
 
 ```sh
-len=$(LC_ALL=C od -An -tu1 -j $((h-4)) -N 4 file.png | awk 'NF>3{print $1*16777216 + $2*65536 + $3*256 + $4}')
+len=$(LC_ALL=C od -An -tu1 -j $((h-4)) -N 4 file.png | LC_ALL=C awk 'NF>3{print $1*16777216 + $2*65536 + $3*256 + $4}')
 LC_ALL=C tail -c +$((h+22)) file.png | head -c $((len-17))    # keyword(12) + NULs(5) = 17 bytes of framing
 ```
 
@@ -139,17 +139,17 @@ LC_ALL=C od -An -tx1 -j $((size-4)) -N 4 base.png    # must be: ae 42 60 82 (IEN
 n=$(wc -c < /tmp/itxt_data | tr -d ' ')
 {
   LC_ALL=C head -c $((size-12)) base.png                   # everything before the IEND chunk
-  awk -v n=$n 'BEGIN{printf "%c%c%c%c", int(n/16777216)%256, int(n/65536)%256, int(n/256)%256, n%256}'
+  LC_ALL=C awk -v n=$n 'BEGIN{printf "%c%c%c%c", int(n/16777216)%256, int(n/65536)%256, int(n/256)%256, n%256}'
   printf 'iTXt'
   cat /tmp/itxt_data
   { printf 'iTXt'; cat /tmp/itxt_data; } | gzip | tail -c 8 | head -c 4 | od -An -tu1 \
-    | awk '{printf "%c%c%c%c", $4, $3, $2, $1}'            # reverse: gzip is LE, PNG wants BE
+    | LC_ALL=C awk '{printf "%c%c%c%c", $4, $3, $2, $1}'   # reverse: gzip is LE, PNG wants BE
   LC_ALL=C tail -c 12 base.png                             # the IEND chunk, whole
   cat payload.txt
 } > artifact.png
 ```
 
-(If your `awk` rejects numeric `%c`, emit octal escapes instead: `printf '\\%03o'` per byte.)
+(If your `awk` rejects numeric `%c`, emit octal escapes instead: `printf '\\%03o'` per byte — octal escapes emit raw bytes and are locale-safe. **Every byte-emitting awk or printf must run under `LC_ALL=C`**: in a UTF-8 locale, some awks (notably gawk) treat a numeric `%c` as a codepoint and emit a multibyte sequence — `0x90` becomes `0xC2 0x90` — silently corrupting the chunk length and CRC fields.)
 
 Notes: the five `\000` after the keyword are the keyword NUL, compression flag 0, method 0, and the two empty-tag NULs. The chunk length is the data length — keyword + 5 NULs + payload — while the CRC covers the type bytes `iTXt` plus that data. The file renders as a normal PNG; `strings artifact.png | grep SHARETHOUGHT` shows the trailer.
 
