@@ -6,12 +6,14 @@ One file. Two audiences. The human reads the picture; the LLM reads the depth. B
 
 ## One file, zero dependencies
 
-[SKILL.md](SKILL.md) is the entire product: the format spec plus working shell recipes for pack, unpack, repack, and verify. No scripts to install, no runtime, no interpreter. Everything runs on a basic shell plus early-generation utilities — `grep`, `od`, `awk`, `gzip`, `base64`, `tail`, `head`. The reading agent is the parser; the shell only moves bytes.
+[SKILL.md](SKILL.md) is the product: the format spec plus working shell recipes for pack, unpack, repack, and verify. No scripts to install, no runtime, no interpreter — a basic shell plus standard utilities (`grep`, `od`, `gzip`, `base64`, `printf`, `tail`, `head`). The reading agent is the parser; the shell only moves bytes.
 
 Two tricks make this work without libraries:
 
 - **CRC32 without zlib**: `gzip` streams end with the CRC32 of their input — `gzip | tail -c 8 | head -c 4 | od` is a pure-shell CRC32 oracle, which is exactly what writing a PNG `iTXt` chunk needs.
 - **One payload, two containers**: the same payload bytes live in a greppable trailer after IEND and in one uncompressed `iTXt` chunk before it — so one delimiter-based parser reads either, no decompression anywhere.
+
+Byte emission uses POSIX `printf` octal escapes (`\NNN` → raw byte in any locale); multi-byte integers are big-endian by spec.
 
 ## The format
 
@@ -31,4 +33,4 @@ test.sh     recipe tests: both locales (C, C.utf8), fixture PNG via base64, no r
 LICENSE     free for any use; no fencing
 ```
 
-CI runs `sh test.sh` with the default awk and again with `AWK=gawk` — byte-emitting awk calls are locale-sensitive in gawk (numeric `%c` becomes a codepoint under UTF-8), which is exactly the class the harness pins.
+CI runs `sh test.sh` on every push: seven non-circular structural checks per locale (length field bytes, IEND geometry, exact payload extraction via declared length, stripped-transport read, trailer read, fixture sanity).

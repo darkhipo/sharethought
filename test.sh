@@ -1,9 +1,7 @@
 #!/bin/sh
 # sharethought recipe tests — pure POSIX sh, no renderer needed (fixture PNG via base64).
 # Runs the SKILL.md pack/read recipes under LC_ALL=C and LC_ALL=C.utf8.
-# Env: AWK (default: awk) — CI also runs AWK=gawk to pin locale-sensitive %c behavior.
 set -u
-AWK=${AWK:-awk}
 total=0; failed=0
 
 ok()  { total=$((total+1)); printf '  ok %d - %s\n' "$total" "$1"; }
@@ -31,11 +29,11 @@ EOF
   n=$(wc -c < "$work/itxt_data" | tr -d ' ')
   {
     LC_ALL=C head -c $((size-12)) "$work/base.png"
-    LC_ALL=C $AWK -v n=$n 'BEGIN{printf "%c%c%c%c", int(n/16777216)%256, int(n/65536)%256, int(n/256)%256, n%256}'
+    printf "\\$(printf '%03o' $((n/16777216%256)))\\$(printf '%03o' $((n/65536%256)))\\$(printf '%03o' $((n/256%256)))\\$(printf '%03o' $((n%256)))"
     printf 'iTXt'
     cat "$work/itxt_data"
-    { printf 'iTXt'; cat "$work/itxt_data"; } | gzip | tail -c 8 | head -c 4 | od -An -tu1 \
-      | LC_ALL=C $AWK '{printf "%c%c%c%c", $4, $3, $2, $1}'
+    ( set -- $( { printf 'iTXt'; cat "$work/itxt_data"; } | gzip | tail -c 8 | head -c 4 | od -An -tu1 )
+      printf "\\$(printf '%03o' "$4")\\$(printf '%03o' "$3")\\$(printf '%03o' "$2")\\$(printf '%03o' "$1")" )
     LC_ALL=C tail -c 12 "$work/base.png"
     cat "$work/payload.txt"
   } > "$work/art.png"
@@ -46,7 +44,7 @@ EOF
   actual=$(od -An -tx1 -j $((h-4)) -N 4 "$work/art.png" | tr -s ' ' | sed 's/^ *//;s/ *$//')
   check "chunk length field bytes" "$expected" "$actual"
 
-  len=$(LC_ALL=C od -An -tu1 -j $((h-4)) -N 4 "$work/art.png" | LC_ALL=C $AWK 'NF>3{print $1*16777216 + $2*65536 + $3*256 + $4}')
+  len=$(set -- $(LC_ALL=C od -An -tu1 -j $((h-4)) -N 4 "$work/art.png"); echo $(($1*16777216 + $2*65536 + $3*256 + $4)))
 
   # --- 2: IEND constant immediately after the chunk (catches CRC expansion) ---
   iend_expected='00 00 00 00 49 45 4e 44 ae 42 60 82'
@@ -65,7 +63,7 @@ EOF
   # --- 5: stripped transport (post-IEND bytes dropped) still reads via chunk ---
   head -c $((off)) "$work/art.png" > "$work/stripped.png"
   h2=$(LC_ALL=C grep -abo 'iTXtsharethought' "$work/stripped.png" | head -1 | cut -d: -f1)
-  len2=$(LC_ALL=C od -An -tu1 -j $((h2-4)) -N 4 "$work/stripped.png" | LC_ALL=C $AWK 'NF>3{print $1*16777216 + $2*65536 + $3*256 + $4}')
+  len2=$(set -- $(LC_ALL=C od -An -tu1 -j $((h2-4)) -N 4 "$work/stripped.png"); echo $(($1*16777216 + $2*65536 + $3*256 + $4)))
   if LC_ALL=C tail -c +$((h2+22)) "$work/stripped.png" | head -c $((len2-17)) | cmp -s - "$work/payload.txt"
   then ok "stripped transport: chunk read exact"; else bad "stripped transport read"; fi
 
@@ -81,7 +79,7 @@ EOF
 }
 
 for LOCALE in C C.utf8; do
-  printf '%s (awk=%s):\n' "$LOCALE" "$AWK"
+  printf '%s:\n' "$LOCALE"
   export LC_ALL=$LOCALE
   run_suite
 done

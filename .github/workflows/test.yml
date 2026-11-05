@@ -5,9 +5,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: recipe tests (default awk, C and C.utf8 locales)
+      - name: recipe tests (C and C.utf8 locales)
         run: sh test.sh
-      - name: install gawk
-        run: sudo apt-get update -qq && sudo apt-get install -y gawk
-      - name: recipe tests (gawk — locale-sensitive %c pinned)
-        run: AWK=gawk sh test.sh
