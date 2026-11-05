@@ -1,6 +1,6 @@
 ---
 name: sharethought
-description: Pack layered data into a PNG. The image humans see is the rendered SVG surface; the SVG source and a markdown document ride inside the file — in iTXt chunks that survive image pipelines and in a greppable trailer after IEND. Use when creating, unpacking, editing, or repacking sharethought files — self-contained artifacts for human-LLM collaborative exchange where the human reads the picture and the LLM reads the depth.
+description: Pack layered data into a PNG. The image humans see is the rendered SVG surface; the SVG source and a markdown document ride inside the file — in iTXt chunks (survives pipelines that preserve ancillary chunks) and in a greppable trailer after IEND. Use when creating, unpacking, editing, or repacking sharethought files — self-contained artifacts for human-LLM collaborative exchange where the human reads the picture and the LLM reads the depth.
 ---
 
 # sharethought
@@ -21,7 +21,7 @@ python3 sharethought.py verify out.png
 python3 -m unittest -q test_sharethought    # the test suite
 ```
 
-`pack` writes both carriers from one build (they cannot diverge). `unpack` prefers chunks, falls back to the trailer, and errors loudly if both carriers are present but disagree — pack cannot produce that, so disagreement means external tampering. `verify` checks signature, IEND, both carriers, section-name grammar, and manifest↔section consistency.
+`pack` writes both carriers from one build (they cannot diverge). `unpack` prefers chunks, falls back to the trailer, and errors loudly if both carriers are present but disagree — pack cannot produce that, so disagreement means external tampering. `verify` checks signature, every chunk's CRC, both carriers, section-name grammar, duplicate sections, and manifest↔section consistency — enforced identically for every carrier.
 
 ## Format (exact)
 
@@ -51,11 +51,11 @@ The same manifest and sections can be carried two ways. Choose by transport.
 
 **B. Ancillary chunks — `iTXt` inside the PNG chunk stream.**
 
-- Lives inside the chunk list, so it survives chunk-level re-writes and image pipelines that keep PNG.
+- Lives inside the chunk list, so it survives any pipeline that preserves ancillary `iTXt` chunks — chunk-level re-writes usually do. A plain Pillow re-save does not (measured); neither does anything that re-encodes.
 - Costs a CRC and chunk framing, and large sections want compressing.
 - Does **not** survive a PNG→JPEG transcode — nothing survives that except the pixels.
 
-**Recommendation: write both** (`pack` does). Same payload, one build, no divergence possible. A reader looks for chunks first and falls back to the trailer, so the file works on chat pipelines and on byte-exact transports alike. The cost is roughly one extra copy of the payload.
+**Recommendation: write both** (`pack` does). Same payload, one build, no divergence possible. A reader looks for chunks first and falls back to the trailer, so the file works wherever ancillary chunks survive and on byte-exact transports alike. The cost is roughly one extra copy of the payload.
 
 Chunk layout:
 
@@ -160,15 +160,15 @@ Round-trip rule: a repacked file is a sharethought file. Same format, same marke
 
 ## Delimiter safety
 
-Section delimiters are `<<<SECTION:name>>>` and `<<<END:name>>>` on their own lines. If content could contain such a line, set `"enc":"base64"` in the manifest for that section and base64 the body — `pack` does this automatically when a body contains its own closing delimiter or the marker string.
+Section delimiters are `<<<SECTION:name>>>` and `<<<END:name>>>` on their own lines. If content could contain such a line, set `"enc":"base64"` in the manifest for that section and base64 the body — `pack` does this automatically whenever any line of a body IS its own closing delimiter (first line, middle, or last) or contains the marker string.
 
-Which collision actually breaks: a body containing a *different* section's delimiters is harmless. A body containing **its own** `<<<END:name>>>` line is truncated by a non-greedy regex — everything after that line is orphaned. The reference implementation detects this (orphaned-content and unbalanced-delimiter errors) instead of silently truncating. When in doubt, base64.
+Which collisions break and which don't: a body containing a *different* section's delimiters is harmless (regression-tested — the reader matches by name, not by global counting). A body containing **its own** `<<<END:name>>>` line, anywhere including as the very first line, is auto-upgraded to base64 at pack. A hand-made file that still manages an unclosed section fails with a named error (orphaned content / missing section), never silent truncation. When in doubt, base64.
 
 ## Keeping the payload alive
 
 The payload is not part of the PNG's pixel data, so any tool that re-encodes the image can drop it silently and leave a perfectly normal-looking PNG with no depth. That includes `Image.open(f).save(g)` in Pillow, image editors, and CDN optimisers. Repack from the original bytes rather than re-saving the rendered file.
 
-Trailers after IEND survive only byte-exact transports. If the file must travel through an image pipeline — a chat attachment, a thumbnailer, a transcoder — use the chunk carrier (pack does), and upload it as a file rather than as an inline image so the PNG is not transcoded to JPEG.
+Trailers after IEND survive only byte-exact transports. The chunk carrier survives only pipelines that preserve ancillary `iTXt` chunks — many do, a plain Pillow re-save does not (measured). If the file must travel through an image pipeline — a chat attachment, a thumbnailer, a transcoder — use the chunk carrier (pack does), and upload it as a file rather than as an inline image so the PNG is not transcoded to JPEG.
 
 ## Working with a human
 

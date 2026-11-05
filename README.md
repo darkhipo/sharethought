@@ -31,4 +31,4 @@ LICENSE                free for any use; no fencing
 
 ## Verify
 
-`python3 sharethought.py verify file.png` — checks signature, IEND, both carriers, agreement between them, name grammar, and manifest↔section consistency. Any sharethought file also opens as a normal image in any viewer.
+`python3 sharethought.py verify file.png` — checks signature, every chunk's CRC, both carriers, agreement between them, name grammar, duplicate sections, and manifest↔section consistency (identically for every carrier). Any sharethought file also opens as a normal image in any viewer.

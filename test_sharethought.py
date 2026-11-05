@@ -1,5 +1,6 @@
 """Tests for sharethought.py — run: python3 -m unittest -q test_sharethought"""
 
+import json
 import struct
 import unittest
 import zlib
@@ -97,7 +98,7 @@ class Malformed(unittest.TestCase):
                 b"<<<SECTION:doc>>>\nhello\n<<<END:svg>>>\n")
         with self.assertRaises(st.SharethoughtError) as cm:
             st.parse_trailer(body)
-        self.assertIn("unbalanced", str(cm.exception))
+        self.assertIn("orphaned", str(cm.exception))
 
     def test_orphaned_trailing_content(self):
         art = st.pack(make_png(), SVG, DOC)
@@ -136,6 +137,85 @@ class DelimiterSafety(unittest.TestCase):
             {"name": "doc", "type": "text/markdown", "enc": "rot13", "summary": "s"}]}
         with self.assertRaises(st.SharethoughtError):
             st.build_trailer(manifest, {"doc": "x"})
+
+
+class ReviewRound2(unittest.TestCase):
+    """Regressions from the second review round."""
+
+    def test_doc_starting_with_own_closer_roundtrips(self):
+        hostile = "<<<END:doc>>>\nstill the doc\n"
+        art = st.pack(make_png(), SVG, hostile)
+        _, sections, _ = st.unpack(art)
+        self.assertEqual(sections["doc"], hostile)
+        self.assertIn("PASS", st.verify(art))
+
+    def test_foreign_closer_in_body_roundtrips(self):
+        body = "# Doc\n\nquotes another section's closer:\n<<<END:svg>>>\nstill fine\n"
+        art = st.pack(make_png(), SVG, body)
+        _, sections, _ = st.unpack(art)
+        self.assertEqual(sections["doc"], body)
+        self.assertIn("PASS", st.verify(art))
+
+    def _chunk_only(self, manifest, sections):
+        prefix, iend, _ = st.split_artifact(st.pack(make_png(), SVG, DOC))
+        carrier = st.make_itxt(st.KW_MANIFEST, json.dumps(manifest))
+        carrier += b"".join(st.make_itxt(st.KW_PREFIX + n, b) for n, b in sections.items())
+        return prefix + carrier + iend
+
+    def test_chunk_only_manifest_omission_errors(self):
+        art = st.pack(make_png(), SVG, DOC)
+        manifest, _, _ = st.unpack(art)
+        m2 = json.loads(json.dumps(manifest))
+        m2["sections"] = [s for s in m2["sections"] if s["name"] == "svg"]
+        tampered = self._chunk_only(m2, {"svg": SVG, "doc": DOC})  # doc chunk present, unlisted
+        with self.assertRaises(st.SharethoughtError) as cm:
+            st.unpack(tampered)
+        self.assertIn("not listed in manifest", str(cm.exception))
+        with self.assertRaises(st.SharethoughtError):
+            st.verify(tampered)
+
+    def test_missing_manifest_chunk_clean_error(self):
+        prefix, iend, _ = st.split_artifact(st.pack(make_png(), SVG, DOC))
+        raw = prefix + st.make_itxt(st.KW_PREFIX + "svg", SVG) + iend
+        with self.assertRaises(st.SharethoughtError) as cm:
+            st.unpack(raw)
+        self.assertIn("manifest chunk missing", str(cm.exception))
+
+    def test_malformed_manifest_chunk_clean_error(self):
+        prefix, iend, _ = st.split_artifact(st.pack(make_png(), SVG, DOC))
+        raw = prefix + st.make_itxt(st.KW_MANIFEST, "{not json") + iend
+        with self.assertRaises(st.SharethoughtError) as cm:
+            st.unpack(raw)
+        self.assertIn("not valid JSON", str(cm.exception))
+
+    def test_duplicate_sections_rejected_trailer(self):
+        one = (b'{"v":1,"sections":[{"name":"doc","type":"text/markdown","enc":"utf8","summary":"s"}]}')
+        block = b"<<<SECTION:doc>>>\nbody\n<<<END:doc>>>\n"
+        trailer = st.MARKER + b"\n" + one + b"\n" + block + block
+        with self.assertRaises(st.SharethoughtError) as cm:
+            st.parse_trailer(trailer)
+        self.assertIn("duplicate", str(cm.exception))
+
+    def test_duplicate_sections_rejected_chunks(self):
+        art = st.pack(make_png(), SVG, DOC)
+        prefix, iend, _ = st.split_artifact(art)
+        manifest, _, _ = st.unpack(art)
+        carrier = (st.make_itxt(st.KW_MANIFEST, json.dumps(manifest))
+                   + st.make_itxt(st.KW_PREFIX + "doc", DOC)
+                   + st.make_itxt(st.KW_PREFIX + "doc", "second body wins? no"))
+        with self.assertRaises(st.SharethoughtError) as cm:
+            st.unpack(prefix + carrier + iend)
+        self.assertIn("duplicate", str(cm.exception))
+
+    def test_corrupt_idat_crc_fails_verify(self):
+        art = bytearray(st.pack(make_png(), SVG, DOC))
+        pos = art.index(b"IDAT") - 4            # length field of the first IDAT
+        (ln,) = struct.unpack(">I", bytes(art[pos : pos + 4]))
+        crc_pos = pos + 8 + ln                  # its stored CRC
+        art[crc_pos] ^= 0xFF                    # corrupt one CRC byte
+        with self.assertRaises(st.SharethoughtError) as cm:
+            st.verify(bytes(art))
+        self.assertIn("CRC", str(cm.exception))
 
 
 if __name__ == "__main__":

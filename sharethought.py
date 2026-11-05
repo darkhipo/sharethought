@@ -32,7 +32,6 @@ import re
 import struct
 import sys
 import zlib
-from collections import Counter
 from pathlib import Path
 
 PNG_SIG = b"\x89PNG\r\n\x1a\n"
@@ -41,8 +40,6 @@ KW_PREFIX = "sharethought:"
 KW_MANIFEST = KW_PREFIX + "manifest"
 NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
 SECTION_RE = re.compile(rb"<<<SECTION:(\w+)>>>\n(.*?)\n<<<END:\1>>>", re.DOTALL)
-OPEN_RE = re.compile(rb"<<<SECTION:(\w+)>>>")
-CLOSE_RE = re.compile(rb"<<<END:(\w+)>>>")
 BAD_NAME_RE = re.compile(rb"<<<SECTION:([^>\n]+?)>>>")
 
 
@@ -99,10 +96,15 @@ def validate_name(name: str) -> None:
 
 
 def _enc_body(name: str, body: str, enc: str) -> tuple[str, str]:
-    """Encode a section body; auto-upgrade utf8 to base64 when unsafe."""
+    """Encode a section body; auto-upgrade utf8 to base64 when unsafe.
+
+    The upgrade triggers on any line that IS the section's closer — first
+    line, middle, or last — plus any occurrence of the marker string.
+    """
     if enc not in ("utf8", "base64"):
         raise SharethoughtError(f"section {name!r}: unknown enc {enc!r} (use utf8|base64)")
-    if enc == "utf8" and (f"\n<<<END:{name}>>>" in body or MARKER.decode() in body):
+    closer = f"<<<END:{name}>>>"
+    if enc == "utf8" and (any(ln == closer for ln in body.split("\n")) or MARKER.decode() in body):
         enc = "base64"  # body would break its own framing — carry it safely
     out = base64.b64encode(body.encode()).decode() if enc == "base64" else body
     return out, enc
@@ -142,22 +144,22 @@ def parse_trailer(trailer: bytes) -> tuple[dict, dict[str, str]]:
     manifest, consumed = json.JSONDecoder().raw_decode(rest.decode("utf-8", errors="strict"))
     if not isinstance(manifest, dict):
         raise SharethoughtError("manifest is not a JSON object")
+    secs_meta = manifest.get("sections", [])
+    if not isinstance(secs_meta, list):
+        raise SharethoughtError("manifest 'sections' is not a list")
 
-    opens = Counter(n.decode() for n in OPEN_RE.findall(trailer))
-    closes = Counter(n.decode() for n in CLOSE_RE.findall(trailer))
-    for name in set(opens) | set(closes):
-        if opens.get(name, 0) != closes.get(name, 0):
-            raise SharethoughtError(
-                f"unbalanced delimiters for section {name!r}: "
-                f"{opens.get(name, 0)} SECTION vs {closes.get(name, 0)} END"
-            )
+    # No global OPEN/CLOSE counting: a foreign section's closer inside a body
+    # is body content, not framing. Structural errors surface as unmatched
+    # regex sections + orphaned leftover below, with named errors.
 
     sections: dict[str, str] = {}
     spent = rest[consumed:]  # everything after the manifest JSON; matches get carved out
     for m in SECTION_RE.finditer(trailer):
         name, raw_body = m.group(1).decode(), m.group(2)
+        if name in sections:
+            raise SharethoughtError(f"duplicate section {name!r} in trailer")
         spent = spent.replace(m.group(0), b"", 1)
-        meta = next((s for s in manifest.get("sections", []) if s.get("name") == name), None)
+        meta = next((s for s in secs_meta if s.get("name") == name), None)
         if meta is None:
             raise SharethoughtError(f"section {name!r} present in trailer but not in manifest")
         enc = meta.get("enc", "utf8")
@@ -175,14 +177,45 @@ def parse_trailer(trailer: bytes) -> tuple[dict, dict[str, str]]:
         if MARKER in leftover:
             raise SharethoughtError("duplicate SHARETHOUGHT-v1 marker in orphaned trailer content")
         raise SharethoughtError(f"orphaned trailer content: {leftover[:80]!r}...")
-    listed = [s["name"] for s in manifest.get("sections", [])]
-    missing = [n for n in listed if n not in sections]
-    if missing:
-        raise SharethoughtError(f"manifest lists sections missing from trailer: {missing}")
+    _check_consistency(manifest, sections)
     return manifest, sections
 
 
 # ---------------------------------------------------------------- iTXt carrier
+
+def _check_consistency(manifest: dict, sections: dict[str, str]) -> None:
+    """Manifest <-> sections consistency, enforced identically for every carrier."""
+    secs = manifest.get("sections")
+    if not isinstance(secs, list):
+        raise SharethoughtError("manifest 'sections' is not a list")
+    listed = [s.get("name") if isinstance(s, dict) else None for s in secs]
+    if None in listed:
+        raise SharethoughtError("manifest 'sections' entry without a name")
+    dupes = sorted({n for n in listed if listed.count(n) > 1})
+    if dupes:
+        raise SharethoughtError(f"manifest lists duplicate section(s): {dupes}")
+    missing = [n for n in listed if n not in sections]
+    if missing:
+        raise SharethoughtError(f"manifest lists sections missing from payload: {missing}")
+    extra = [n for n in sections if n not in listed]
+    if extra:
+        raise SharethoughtError(f"sections not listed in manifest: {extra}")
+
+
+def _chunks_to_payload(chunked: dict[str, str]) -> tuple[dict, dict[str, str]]:
+    """Validate and convert the iTXt carrier to (manifest, sections)."""
+    if KW_MANIFEST not in chunked:
+        raise SharethoughtError("chunk carrier present but sharethought:manifest chunk missing")
+    try:
+        manifest = json.loads(chunked[KW_MANIFEST])
+    except json.JSONDecodeError as exc:
+        raise SharethoughtError(f"sharethought:manifest chunk is not valid JSON ({exc})") from exc
+    if not isinstance(manifest, dict):
+        raise SharethoughtError("manifest chunk is not a JSON object")
+    sections = {k[len(KW_PREFIX):]: v for k, v in chunked.items() if k != KW_MANIFEST}
+    _check_consistency(manifest, sections)
+    return manifest, sections
+
 
 def make_itxt(keyword: str, text: str) -> bytes:
     """One zlib-compressed iTXt chunk carrying text under keyword."""
@@ -223,6 +256,8 @@ def read_chunks(raw: bytes) -> dict[str, str]:
             if key.startswith(KW_PREFIX):
                 name = key[len(KW_PREFIX) :]
                 if name == "manifest" or NAME_RE.match(name):
+                    if key in out:
+                        raise SharethoughtError(f"duplicate iTXt chunk keyword {key!r}")
                     out[key] = text
                 else:
                     raise SharethoughtError(f"invalid section name in chunk keyword: {name!r}")
@@ -274,16 +309,14 @@ def unpack(raw: bytes) -> tuple[dict, dict[str, str], str]:
         pass
     if chunked and trailer_ok:
         t_manifest, t_sections = parse_trailer(raw[iend_end:])
-        c_manifest = json.loads(chunked[KW_MANIFEST])
-        c_sections = {k[len(KW_PREFIX):]: v for k, v in chunked.items() if k != KW_MANIFEST}
+        c_manifest, c_sections = _chunks_to_payload(chunked)
         if t_manifest != c_manifest or t_sections != c_sections:
             raise SharethoughtError(
                 "chunk and trailer carriers disagree — the file was edited inconsistently"
             )
         return t_manifest, t_sections, "chunks+trailer"
     if chunked:
-        manifest = json.loads(chunked[KW_MANIFEST])
-        sections = {k[len(KW_PREFIX):]: v for k, v in chunked.items() if k != KW_MANIFEST}
+        manifest, sections = _chunks_to_payload(chunked)
         return manifest, sections, "chunks"
     if trailer_ok:
         manifest, sections = parse_trailer(raw[iend_end:])
@@ -332,13 +365,32 @@ def repack_text(raw: bytes, new_sections: dict[str, str]) -> bytes:
     return assemble(prefix, iend, manifest, sections)
 
 
+def verify_png_crcs(raw: bytes) -> int:
+    """Recompute every chunk CRC; return the chunk count. Raises on mismatch."""
+    off, n = 8, 0
+    while off + 8 <= len(raw):
+        (ln,) = struct.unpack(">I", raw[off : off + 4])
+        typ = raw[off + 4 : off + 8]
+        end = off + 12 + ln
+        if end > len(raw):
+            raise SharethoughtError(f"chunk {typ!r} overruns file (truncated PNG)")
+        (stored,) = struct.unpack(">I", raw[end - 4 : end])
+        if zlib.crc32(typ + raw[off + 8 : off + 8 + ln]) != stored:
+            raise SharethoughtError(f"chunk {typ!r} (#{n}): CRC mismatch — corrupt PNG")
+        n += 1
+        if typ == b"IEND":
+            return n
+        off = end
+    raise SharethoughtError("no IEND chunk (truncated PNG)")
+
+
 def verify(raw: bytes) -> list[str]:
     """Run all checks; return the report lines (raises on any failure)."""
-    lines = []
-    (w, h) = struct.unpack(">II", raw[16:24]) if raw.startswith(PNG_SIG) else (0, 0)
-    if not raw.startswith(PNG_SIG):
+    if len(raw) < 24 or not raw.startswith(PNG_SIG):
         raise SharethoughtError("not a PNG (bad signature)")
-    lines.append(f"PNG signature ok; IHDR {w}x{h}")
+    (w, h) = struct.unpack(">II", raw[16:24])
+    lines = [f"PNG signature ok; IHDR {w}x{h}"]
+    lines.append(f"{verify_png_crcs(raw)} chunks, CRCs ok")
     iend_end = find_iend(raw)
     lines.append(f"IEND chunk ok at offset {iend_end - 12}")
     manifest, sections, carrier = unpack(raw)
@@ -410,7 +462,7 @@ def main(argv: list[str] | None = None) -> int:
         elif a.cmd == "verify":
             for line in verify(Path(a.file).read_bytes()):
                 print(line)
-    except (SharethoughtError, OSError, UnicodeDecodeError) as exc:
+    except (SharethoughtError, OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
     return 0
