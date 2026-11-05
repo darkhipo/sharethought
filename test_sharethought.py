@@ -1,9 +1,11 @@
 """Tests for sharethought.py — run: python3 -m unittest -q test_sharethought"""
 
 import json
+import re
 import struct
 import unittest
 import zlib
+from pathlib import Path
 
 import sharethought as st
 
@@ -216,6 +218,21 @@ class ReviewRound2(unittest.TestCase):
         with self.assertRaises(st.SharethoughtError) as cm:
             st.verify(bytes(art))
         self.assertIn("CRC", str(cm.exception))
+
+
+class SpecDrift(unittest.TestCase):
+    """The how-field is mandatory and must contain working instructions —
+    so the spec's example manifest and pack()'s actual manifest must not drift."""
+
+    def test_how_matches_spec(self):
+        skill = Path("SKILL.md").read_text()
+        block = re.search(r"```json\n(\{.*?SHARETHOUGHT-v1.*?\})\n```", skill, re.DOTALL)
+        self.assertIsNotNone(block, "SKILL.md manifest example not found")
+        spec_manifest = json.loads(block.group(1))
+        _, _, _ = unpacked = st.unpack(st.pack(make_png(), SVG, DOC))
+        actual = unpacked[0]
+        self.assertEqual(spec_manifest["how"], actual["how"],
+                         "SKILL.md example and pack() how-field have drifted")
 
 
 if __name__ == "__main__":

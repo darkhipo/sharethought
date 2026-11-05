@@ -333,16 +333,22 @@ def pack(png: bytes, svg: str, doc: str, what: str = "") -> bytes:
     manifest = {
         "v": 1,
         "what": what or "sharethought artifact",
+        # NOTE: these strings are duplicated verbatim in SKILL.md's manifest
+        # example — test_how_matches_spec pins them together.
         "how": {
-            "unpack": "Read iTXt chunks named sharethought:* if present (the manifest is "
-                      "sharethought:manifest); otherwise read bytes from the SHARETHOUGHT-v1 "
-                      "marker to EOF. Parse the JSON manifest, then each section between its "
-                      "<<<SECTION:name>>> and <<<END:name>>> delimiters. Decode base64 sections.",
-            "repack_text_only": "Keep the PNG bytes up to the marker, rewrite the trailer with "
-                                "updated manifest and sections. No re-render needed. Or use: "
-                                "python3 sharethought.py repack --text FILE --set doc=new.md",
-            "repack_visual": "Edit the svg section, render to PNG (rsvg-convert / cairosvg / "
-                             "resvg / headless Chromium), then pack again.",
+            "unpack": "Read the iTXt chunks named sharethought:* if present (the manifest "
+                      "is sharethought:manifest); otherwise read bytes from the "
+                      "SHARETHOUGHT-v1 marker to EOF. Parse the JSON manifest, then each "
+                      "section between its <<<SECTION:name>>> and <<<END:name>>> "
+                      "delimiters. Decode base64 sections.",
+            "repack_text_only": "Keep the original PNG bytes up to the marker, then "
+                                "rewrite the trailer with updated manifest and sections. "
+                                "No re-render needed. Or run: python3 sharethought.py "
+                                "repack --text FILE --set doc=new.md",
+            "repack_visual": "To change the image: edit the svg section, render it to PNG "
+                             "(rsvg-convert -w 1200 in.svg > out.png, or cairosvg, or "
+                             "resvg, or a headless browser such as Chromium via "
+                             "Playwright), then pack again.",
         },
         "sections": [
             {"name": "svg", "type": "image/svg+xml", "enc": "utf8", "summary": "rendered image source"},
