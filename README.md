@@ -33,4 +33,4 @@ test.sh     recipe tests: both locales (C, C.utf8), fixture PNG via base64, no r
 LICENSE     free for any use; no fencing
 ```
 
-CI runs `sh test.sh` on every push: seven non-circular structural checks per locale (length field bytes, IEND geometry, exact payload extraction via declared length, stripped-transport read, trailer read, fixture sanity).
+CI runs `sh test.sh` on every push: twelve non-circular structural checks per locale — length field bytes, IEND geometry, exact payload extraction via declared length, stripped-transport read, trailer read, fixture sanity, and the full text-only repack workflow (old carrier spliced out, both containers rebuilt, image prefix proven unchanged).

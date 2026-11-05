@@ -174,11 +174,11 @@ In order; any failure is a real defect, name it:
 
 ## Portability
 
-- Required: POSIX sh with arithmetic expansion; `grep`, `od`, `gzip`, `base64`, `tail`, `head`, `cat`, `printf`, `wc`, `tr`, `sed`, `cmp`. No awk, python, or libraries.
+- Required: POSIX sh with arithmetic expansion; `grep`, `od`, `gzip`, `base64`, `tail`, `head`, `cat`, `printf`, `wc`, `tr`, `cmp`. No awk, python, or libraries.
 - All multi-byte integers in the format are big-endian by spec — no host-endianness assumptions.
 - Byte emission is `printf` octal escapes only (`\NNN` → the raw byte, locale-independent).
 - `head -c N` is universal in practice (GNU, BSD/macOS, busybox) but not in POSIX head; substitute `dd if=file bs=1 skip=S count=N 2>/dev/null` for strict POSIX (slow for large prefixes).
-- `grep -a` (treat binary as text) and `-o` (print match only) are GNU/BSD, not POSIX — present in GNU, BSD/macOS, and busybox grep. Without them, compute offsets from `grep -b` line offsets: a `$`-anchored match ends its line, so the marker offset = line offset + line byte length − marker length.
+- `grep -a` (treat binary as text) and `-o` (print match only) are GNU/BSD, not POSIX — present in GNU, BSD/macOS, and busybox grep. Without them, compute offsets from `grep -b` line offsets: a `$`-anchored match ends its line, so the marker offset = line offset + line byte length (excluding the newline) − marker length.
 - All byte-emitting steps still run under `LC_ALL=C` as a cheap invariant; the recipes are correct under any locale.
 
 ## Keeping the payload alive
