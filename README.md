@@ -4,31 +4,28 @@ A PNG file with layers. The image renders normally everywhere — that's what hu
 
 One file. Two audiences. The human reads the picture; the LLM reads the depth. Both edit the same artifact.
 
+## One file, zero dependencies
+
+[SKILL.md](SKILL.md) is the entire product: the format spec plus working shell recipes for pack, unpack, repack, and verify. No scripts to install, no runtime, no interpreter. Everything runs on a basic shell plus early-generation utilities — `grep`, `od`, `awk`, `gzip`, `base64`, `tail`, `head`. The reading agent is the parser; the shell only moves bytes.
+
+Two tricks make this work without libraries:
+
+- **CRC32 without zlib**: `gzip` streams end with the CRC32 of their input — `gzip | tail -c 8 | head -c 4 | od` is a pure-shell CRC32 oracle, which is exactly what writing a PNG `iTXt` chunk needs.
+- **One payload, two containers**: the same payload bytes live in a greppable trailer after IEND and in one uncompressed `iTXt` chunk before it — so one delimiter-based parser reads either, no decompression anywhere.
+
 ## The format
 
-Valid PNG, dual carrier: `iTXt` chunks inside the PNG chunk stream (survives image pipelines that re-serialise the PNG) **and** a `SHARETHOUGHT-v1` trailer after IEND (greppable, byte-exact transports). Manifest + delimiter-framed text sections (`svg`, `doc`, any others). Full spec in [SKILL.md](SKILL.md).
+Valid PNG, dual carrier. Payload = `SHARETHOUGHT-v1` marker + JSON manifest + `<<<SECTION:name>>>`-framed text sections (`svg`, `doc`, any others). The chunk carrier survives pipelines that preserve ancillary chunks; the trailer survives byte-exact transports. Full spec: [SKILL.md](SKILL.md).
 
 ## Use it
 
-```
-python3 sharethought.py pack   --png base.png --svg s.svg --doc d.md -o out.png --what "one line"
-python3 sharethought.py unpack out.png
-python3 sharethought.py repack --text out.png --set doc=new.md -o out2.png
-python3 sharethought.py verify out.png
-python3 -m unittest -q test_sharethought
-```
+Drop `SKILL.md` into your agent's skill directory (any harness that reads the SKILL.md convention), or just read it — every recipe it contains is copy-paste runnable.
 
-Stdlib only — no dependencies. Drop `SKILL.md` into your agent's skill directory (Claude Code, opencode, any harness that reads the SKILL.md convention), or just read it.
+Quick check on any file: `grep -abo 'SHARETHOUGHT-v1' file.png` finds the payload; `tail -c +$((offset+1)) file.png` prints it.
 
 ## Repo layout
 
 ```
-SKILL.md               the skill — spec + procedures
-sharethought.py        reference implementation (pack/unpack/repack/verify, stdlib only)
-test_sharethought.py   test suite: round-trips, transport survival, malformed inputs
-LICENSE                free for any use; no fencing
+SKILL.md    the format spec + all shell recipes — the whole product
+LICENSE     free for any use; no fencing
 ```
-
-## Verify
-
-`python3 sharethought.py verify file.png` — checks signature, every chunk's CRC, both carriers, agreement between them, name grammar, duplicate sections, and manifest↔section consistency (identically for every carrier). Any sharethought file also opens as a normal image in any viewer.
