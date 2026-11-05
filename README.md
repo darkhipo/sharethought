@@ -21,7 +21,7 @@ Valid PNG, dual carrier. Payload = `SHARETHOUGHT-v1` marker + JSON manifest + `<
 
 Drop `SKILL.md` into your agent's skill directory (any harness that reads the SKILL.md convention), or just read it — every recipe it contains is copy-paste runnable.
 
-Quick check on any file: `grep -abo 'SHARETHOUGHT-v1' file.png` finds the payload; `tail -c +$((offset+1)) file.png` prints it.
+Quick check on any file: `grep -abo 'SHARETHOUGHT-v1$' file.png` finds the payload (end-of-line anchored — every hit is a payload copy); `tail -c +$((offset+1)) file.png` prints it.
 
 ## Repo layout
 
