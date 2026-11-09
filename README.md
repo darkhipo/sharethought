@@ -30,7 +30,7 @@ Quick check on any file: `grep -abo 'SHARETHOUGHT-v1$' file.png` finds the paylo
 ```
 SKILL.md    the format spec + all shell recipes — the product
 test.sh     recipe tests: both locales (C, C.utf8), fixture PNG via base64, no renderer needed
-LICENSE     free for any use; no fencing
+LICENSE     the [Copy-Free/Stays-Free (CFSF) License](https://github.com/darkhipo/cfsf) — free for any use, no fencing
 ```
 
 CI runs `sh test.sh` on every push: twelve non-circular structural checks per locale — length field bytes, IEND geometry, exact payload extraction via declared length, stripped-transport read, trailer read, fixture sanity, and the full text-only repack workflow (old carrier spliced out, both containers rebuilt, image prefix proven unchanged).
